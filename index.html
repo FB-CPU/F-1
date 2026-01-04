@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>峰谷平尖电费时段计算器</title>
+    <meta name="description" content="快速计算任意时间段内的尖峰、高峰、平段、谷时总时长，支持跨天跨月。">
+    <!-- 微信分享用 -->
+    <meta property="og:title" content="峰谷平尖电费时段计算器">
+    <meta property="og:description" content="输入起止时间，一键查看尖峰、高峰、平段、谷时各自时长，方便算电费！">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://your-domain.com/"> <!-- 部署后改成你的链接 -->
+    <meta property="og:image" content="https://your-domain.com/share.jpg"> <!-- 可选：准备一张分享图 -->
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+            background: #f5f5f7;
+            margin: 0;
+            padding: 0;
+            color: #333;
+        }
+        .container {
+            max-width: 500px;
+            margin: 0 auto;
+            background: #fff;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: linear-gradient(135deg, #4e73df, #224abe);
+            color: white;
+            text-align: center;
+            padding: 30px 20px 20px;
+        }
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .desc {
+            margin: 8px 0 0;
+            opacity: 0.9;
+            font-size: 14px;
+        }
+        .main {
+            flex: 1;
+            padding: 20px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 15px;
+            font-weight: 500;
+        }
+        input[type="datetime-local"] {
+            width: 100%;
+            padding: 12px 14px;
+            font-size: 16px;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            box-sizing: border-box;
+            background: #fff;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            font-size: 17px;
+            font-weight: 600;
+            color: white;
+            background: #007aff;
+            border: none;
+            border-radius: 12px;
+            margin-top: 10px;
+        }
+        .result {
+            margin-top: 30px;
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            display: none;
+        }
+        .item {
+            display: flex;
+            justify-content: space-between;
+            font-size: 18px;
+            margin: 14px 0;
+        }
+        .label {
+            font-weight: 500;
+        }
+        .value {
+            font-weight: 600;
+            color: #007aff;
+        }
+        .total {
+            border-top: 1px solid #eee;
+            padding-top: 14px;
+            margin-top: 20px;
+            font-size: 16px;
+            text-align: right;
+        }
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+            font-size: 13px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>峰谷平尖时段计算器</h1>
+            <p class="desc">输入起止时间，自动计算各时段时长（小时）</p>
+        </header>
+
+        <div class="main">
+            <div class="input-group">
+                <label>起始时间</label>
+                <input type="datetime-local" id="start">
+            </div>
+            <div class="input-group">
+                <label>结束时间</label>
+                <input type="datetime-local" id="end">
+            </div>
+            <button onclick="calculate()">立即计算</button>
+
+            <div class="result" id="result">
+                <div class="item"><span class="label">尖峰</span><span class="value" id="sharp">0</span> 小时</div>
+                <div class="item"><span class="label">高峰</span><span class="value" id="peak">0</span> 小时</div>
+                <div class="item"><span class="label">平段</span><span class="value" id="flat">0</span> 小时</div>
+                <div class="item"><span class="label">谷时</span><span class="value" id="valley">0</span> 小时</div>
+                <div class="total">总计：<span id="total">0</span> 小时</div>
+            </div>
+        </div>
+
+        <footer>
+            数据仅供参考 · 规则基于常见分时电价政策
+        </footer>
+    </div>
+
+    <script>
+        // 默认填充当前时间前后，便于测试
+        window.onload = () => {
+            const now = new Date();
+            const start = new Date(now.getTime() - 12 * 3600000); // 前12小时
+            document.getElementById('start').value = formatDateTime(start);
+            document.getElementById('end').value = formatDateTime(now);
+        };
+
+        function formatDateTime(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const d = String(date.getDate()).padStart(2, '0');
+            const h = String(date.getHours()).padStart(2, '0');
+            const min = String(date.getMinutes()).padStart(2, '0');
+            return `${y}-${m}-${d}T${h}:${min}`;
+        }
+
+        function getPeriodType(date) {
+            const month = date.getMonth() + 1;
+            const hour = date.getHours();
+            const minute = date.getMinutes();
+            const totalMin = hour * 60 + minute;
+
+            if (month === 7 || month === 8) {
+                // 夏季（7、8月）
+                if (totalMin >= 20*60 && totalMin < 22*60) return "尖峰";
+                if (totalMin >= 15*60 && totalMin < 23*60) return "高峰";
+                if (totalMin < 60 || (totalMin >= 9*60 && totalMin < 15*60) || totalMin >= 23*60) return "平段";
+                return "谷时";
+            } else {
+                // 其他月份
+                if ((month === 1 || month === 2 || month === 12) && totalMin >= 18*60 && totalMin < 20*60) {
+                    return "尖峰";
+                }
+                if ((totalMin >= 8*60 && totalMin < 10*60) || (totalMin >= 16*60 && totalMin < 22*60)) {
+                    return "高峰";
+                }
+                if ((totalMin >= 6*60 && totalMin < 8*60) || (totalMin >= 10*60 && totalMin < 12*60) ||
+                    (totalMin >= 14*60 && totalMin < 16*60) || totalMin >= 22*60) {
+                    return "平段";
+                }
+                return "谷时";
+            }
+        }
+
+        function calculate() {
+            const startInput = document.getElementById('start').value;
+            const endInput = document.getElementById('end').value;
+
+            if (!startInput || !endInput) {
+                alert("请选择起止时间");
+                return;
+            }
+
+            const start = new Date(startInput);
+            const end = new Date(endInput);
+
+            if (start >= end) {
+                alert("结束时间必须晚于起始时间");
+                return;
+            }
+
+            const stats = { 尖峰: 0, 高峰: 0, 平段: 0, 谷时: 0 };
+            let current = new Date(start);
+
+            while (current < end) {
+                const type = getPeriodType(current);
+                const next = new Date(current);
+                next.setMinutes(next.getMinutes() + 1);
+
+                let minutesToAdd = 1;
+                if (next > end) {
+                    minutesToAdd = (end - current) / 60000; // 剩余分钟
+                }
+
+                stats[type] += minutesToAdd;
+                current = next;
+            }
+
+            // 转为小时，保留3位小数
+            const hours = {
+                sharp: (stats.尖峰 / 60).toFixed(3),
+                peak: (stats.高峰 / 60).toFixed(3),
+                flat: (stats.平段 / 60).toFixed(3),
+                valley: (stats.谷时 / 60).toFixed(3)
+            };
+
+            const total = (stats.尖峰 + stats.高峰 + stats.平段 + stats.谷时) / 60;
+
+            document.getElementById('sharp').textContent = hours.sharp;
+            document.getElementById('peak').textContent = hours.peak;
+            document.getElementById('flat').textContent = hours.flat;
+            document.getElementById('valley').textContent = hours.valley;
+            document.getElementById('total').textContent = total.toFixed(3);
+            document.getElementById('result').style.display = 'block';
+        }
+    </script>
+</body>
+</html>
