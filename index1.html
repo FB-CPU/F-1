@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>峰谷平统计器（正式版）</title>
+<style>
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f5f5f7;
+    margin: 0;
+}
+.container {
+    max-width: 560px;
+    margin: auto;
+    background: #fff;
+    min-height: 100vh;
+    padding: 20px;
+}
+h1 {
+    text-align: center;
+    color: #007aff;
+}
+.desc, .save-notice {
+    text-align: center;
+    color: #666;
+    font-size: 14px;
+}
+.record {
+    background: #f8f9fa;
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 16px;
+    position: relative;
+}
+label {
+    display: block;
+    margin-top: 10px;
+    font-weight: 600;
+}
+select, input {
+    width: 100%;
+    padding: 10px;
+    margin-top: 4px;
+}
+button {
+    width: 100%;
+    padding: 12px;
+    margin-top: 12px;
+    border-radius: 10px;
+    border: none;
+    font-size: 16px;
+}
+#addRecord { background: #007aff; color: white; }
+#calculate { background: #34c759; color: white; font-weight: bold; }
+#clearData { background: #ff3b30; color: white; }
+.delete-btn {
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    font-size: 20px;
+    color: #ff3b30;
+    background: none;
+    border: none;
+    cursor: pointer;
+}
+#output {
+    white-space: pre-wrap;
+    background: #f8f9fa;
+    padding: 16px;
+    border-radius: 12px;
+    margin-top: 20px;
+    display: none;
+    line-height: 1.6;
+}
+</style>
+</head>
+
+<body>
+<div class="container">
+<h1>峰谷平统计器</h1>
+<p class="desc">停产 / 检修 / 工停 / 待料</p>
+<p class="save-notice">数据自动保存</p>
+
+<label>部门</label>
+<select id="department">
+<option value="">-- 请选择 --</option>
+<option>炼铁厂</option>
+<option>炼钢厂一区</option>
+<option>炼钢厂二区</option>
+<option>轧管250机组</option>
+<option>轧管258机组</option>
+<option>轧管168机组</option>
+<option>轧管460机组</option>
+</select>
+
+<div id="recordsContainer"></div>
+
+<button id="addRecord">+ 添加记录</button>
+<button id="calculate">计算并生成报告</button>
+<button id="clearData">清除所有数据</button>
+
+<div id="output"></div>
+</div>
+
+<script>
+const STORAGE_KEY = 'fgp_final_cn_date';
+const recordsContainer = document.getElementById('recordsContainer');
+const deptSelect = document.getElementById('department');
+const output = document.getElementById('output');
+let recordId = 0;
+
+/* ---------- 工具函数 ---------- */
+function fmtDate(d) {
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+}
+function fmtTime(d) {
+    return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/* ---------- 记录 ---------- */
+function createRecord(s='', e='', t='错峰') {
+    recordId++;
+    const d = document.createElement('div');
+    d.className = 'record';
+    d.id = 'r'+recordId;
+    d.innerHTML = `
+        <button class="delete-btn" onclick="document.getElementById('r${recordId}').remove();save()">×</button>
+        <label>类型</label>
+        <select class="type">
+            ${['错峰','工停','检修','停产','待料'].map(x=>`<option ${x===t?'selected':''}>${x}</option>`).join('')}
+        </select>
+        <label>开始</label>
+        <input type="datetime-local" class="start" value="${s}">
+        <label>结束</label>
+        <input type="datetime-local" class="end" value="${e}">
+    `;
+    d.querySelectorAll('select,input').forEach(x=>{
+        x.oninput = save;
+        x.onchange = save;
+    });
+    recordsContainer.appendChild(d);
+}
+
+function save() {
+    const data = {
+        dept: deptSelect.value,
+        records: [...recordsContainer.children].map(r=>({
+            type: r.querySelector('.type').value,
+            start: r.querySelector('.start').value,
+            end: r.querySelector('.end').value
+        }))
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function load() {
+    const s = localStorage.getItem(STORAGE_KEY);
+    if (!s) return createRecord();
+    const d = JSON.parse(s);
+    deptSelect.value = d.dept || '';
+    d.records.forEach(r=>createRecord(r.start, r.end, r.type));
+}
+
+document.getElementById('addRecord').onclick = ()=>createRecord();
+document.getElementById('clearData').onclick = ()=>{
+    if(confirm('确认清除？')){localStorage.removeItem(STORAGE_KEY);location.reload();}
+};
+deptSelect.onchange = save;
+window.onload = load;
+
+/* ---------- 计算 ---------- */
+document.getElementById('calculate').onclick = ()=>{
+    if(!deptSelect.value) return alert('请选择部门');
+
+    let totalMin=0, peakMin=0, valleyMin=0, flatMin=0;
+    let wrong=0, typeCnt={};
+    let eventGroups={};
+
+    [...recordsContainer.children].forEach(r=>{
+        const t=r.querySelector('.type').value;
+        const s=new Date(r.querySelector('.start').value);
+        const e=new Date(r.querySelector('.end').value);
+        if(!s||!e||s>=e) return;
+
+        if(t==='错峰'){wrong++;return;}
+
+        typeCnt[t]=(typeCnt[t]||0)+1;
+        if(!eventGroups[t]) eventGroups[t]=[];
+        eventGroups[t].push(`${fmtDate(s)}${fmtTime(s)}-${fmtTime(e)}`);
+
+        let cur=new Date(s);
+        while(cur<e){
+            let next=new Date(cur.getTime()+60000);
+            let add=(next>e?(e-cur)/60000:1);
+            totalMin+=add;
+            let p=getPeriod(cur);
+            if(p==='峰') peakMin+=add;
+            else if(p==='谷') valleyMin+=add;
+            else flatMin+=add;
+            cur=next;
+        }
+    });
+
+    const eventText = Object.entries(eventGroups)
+        .map(([t,arr])=>`${arr.join('、')}${t}`)
+        .join('，');
+
+    const totalH=Number((totalMin/60).toFixed(1));
+    const peakH=Number((peakMin/60).toFixed(1));
+    const valleyH=Number((valleyMin/60).toFixed(1));
+    const flatH=Number((totalH-peakH-valleyH).toFixed(1));
+
+    const part1 = eventText
+        ? `${eventText}，
+总时长${totalH}h，其中包含峰时段（${peakH}h）、谷时段（${valleyH}h）和平时段（${flatH}h）`
+        : '全部为错峰时间';
+
+    const p = x=>totalH?((x/totalH)*100).toFixed(2):'0.00';
+
+    output.textContent =
+`第一部分：
+${part1}
+
+第二部分：
+【${deptSelect.value}】
+错峰${wrong}次
+${Object.entries(typeCnt).map(([k,v])=>`${k}${v}次`).join('，')}
+
+总时长${totalH}h
+峰时段 ${peakH}h（${p(peakH)}%）
+谷时段 ${valleyH}h（${p(valleyH)}%）
+平时段 ${flatH}h（${p(flatH)}%）`;
+
+    output.style.display='block';
+};
+
+/* ---------- 峰谷平规则 ---------- */
+function getPeriod(d){
+    const m=d.getMonth()+1;
+    const min=d.getHours()*60+d.getMinutes();
+    const summer=m===7||m===8;
+
+    if([1,2,12].includes(m)&&min>=1080&&min<1200) return '峰';
+    if(summer&&min>=1200&&min<1320) return '峰';
+    if(summer&&min>=900&&min<1380) return '峰';
+    if(!summer&&((min>=480&&min<600)||(min>=960&&min<1320))) return '峰';
+
+    if(summer&&min>=60&&min<540) return '谷';
+    if(!summer&&((min<360)||(min>=720&&min<840))) return '谷';
+
+    return '平';
+}
+</script>
+</body>
+</html>
