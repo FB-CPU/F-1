@@ -284,7 +284,11 @@ document.getElementById('calculate').onclick = ()=>{
 
         typeCnt[t]=(typeCnt[t]||0)+1;
         if(!eventGroups[t]) eventGroups[t]=[];
-        eventGroups[t].push(`${fmtDate(s)}${fmtTime(s)}-${fmtTime(e)}`);
+        let endLabel = fmtTime(e);
+        if (s.getDate() !== e.getDate()) {
+            endLabel = `${fmtDate(e)}${fmtTime(e)}`;
+        }
+        eventGroups[t].push(`${fmtDate(s)}${fmtTime(s)}-${endLabel}`);
 
         let cur=new Date(s);
         while(cur<e){
