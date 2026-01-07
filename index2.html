@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>钢铁厂停产/检修统计器 (固定顺序版)</title>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f7; margin:0; padding:0; color:#1d1d1f; }
+        .container { max-width: 720px; margin: 0 auto; background: white; min-height: 100vh; padding: 30px 20px; box-sizing: border-box; }
+        h1 { font-size: 26px; text-align: center; margin: 20px 0 8px; color: #007aff; }
+        .desc { text-align: center; color: #666; font-size: 15px; margin-bottom: 30px; }
+        #uploadExcel { background: #007aff; color: white; border: none; padding: 16px; border-radius: 12px; font-size: 18px; font-weight: 600; width: 100%; cursor: pointer; margin: 20px 0; }
+        input[type="file"] { display: none; }
+        #output { margin-top: 30px; background: #f8f9fa; padding: 24px; border-radius: 14px; white-space: pre-wrap; line-height: 1.8; font-size: 15px; display: none; box-shadow: inset 0 2px 8px rgba(0,0,0,0.04); border: 1px solid #e1e1e3; }
+        .loading { text-align: center; font-size: 16px; color: #007aff; margin: 30px 0; display: none; }
+        footer { text-align: center; color: #888; font-size: 13px; margin-top: 40px; padding-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>钢铁厂停产/检修/统计器</h1>
+        <p class="desc">上传Excel表格 → 自动按炼铁/炼钢/机组顺序生成报告</p>
+
+        <button id="uploadExcel">点击上传Excel表格（.xls / .xlsx）</button>
+        <input type="file" id="excelFile" accept=".xls,.xlsx">
+
+        <div class="loading" id="loading">正在解析表格，请稍候...</div>
+
+        <div id="output"></div>
+
+        <footer>支持多部门汇总 · 年份默认为2026年 · 严格固定输出顺序</footer>
+    </div>
+
+    <script>
+        const uploadBtn = document.getElementById('uploadExcel');
+        const fileInput = document.getElementById('excelFile');
+        const loading = document.getElementById('loading');
+        const output = document.getElementById('output');
+
+        // 定义严格的输出顺序
+        const PRESET_ORDER = [
+            '炼铁厂', 
+            '炼钢厂一区', 
+            '炼钢厂二区', 
+            '168机组', 
+            '250机组', 
+            '258机组', 
+            '460机组'
+        ];
+
+        function getOrderIndex(name) {
+            const index = PRESET_ORDER.indexOf(name);
+            return index === -1 ? 999 : index; // 没在列表里的排最后
+        }
+
+        uploadBtn.onclick = () => fileInput.click();
+
+        fileInput.onchange = e => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            loading.style.display = 'block';
+            output.style.display = 'none';
+            output.textContent = '';
+
+            const reader = new FileReader();
+            reader.onload = evt => {
+                try {
+                    const data = evt.target.result;
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const allEntries = [];
+
+                    workbook.SheetNames.forEach(sheetName => {
+                        const sheet = workbook.Sheets[sheetName];
+                        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false, defval: '' });
+
+                        // 统一部门命名规范
+                        let currentDept = sheetName.trim()
+                            .replace(/一炼钢/g, '炼钢厂一区')
+                            .replace(/二炼钢/g, '炼钢厂二区')
+                            .replace(/炼铁/g, '炼铁厂')
+                            .trim();
+
+                        let currentStart = null;
+                        let currentType = '';
+
+                        rows.forEach((row, idx) => {
+                            if (row.length < 4) return;
+                            const c0 = (row[0] || '').toString().trim();
+                            if (idx < 2 || c0 === '项目' || c0 === '') return;
+
+                            if (c0.includes('开始')) {
+                                const year = parseInt(row[1] || '2026') || 2026;
+                                let timeStr = (row[2] || '').toString().replace(/[\s\u3000\u00A0]+/g, '').replace(/[：：]/g, ':');
+                                const fullMatch = timeStr.match(/(\d+)月(\d+)日(\d+):(\d+)/);
+                                if (fullMatch) {
+                                    const [, m, d, h, min] = fullMatch;
+                                    currentStart = new Date(year, parseInt(m)-1, parseInt(d), parseInt(h), parseInt(min));
+                                }
+                                currentType = (row[3] || '').trim();
+                            }
+
+                            if (c0.includes('结束') && currentStart) {
+                                const year = parseInt(row[1] || '2026') || 2026;
+                                let timeStr = (row[2] || '').toString().replace(/[\s\u3000\u00A0]+/g, '').replace(/[：：]/g, ':');
+                                let endDate;
+                                const fullMatch = timeStr.match(/(\d+)月(\d+)日(\d+):(\d+)/);
+                                if (fullMatch) {
+                                    const [, m, d, h, min] = fullMatch;
+                                    endDate = new Date(year, parseInt(m)-1, parseInt(d), parseInt(h), parseInt(min));
+                                } else {
+                                    const timeOnly = timeStr.match(/(\d+):(\d+)/);
+                                    if (timeOnly) {
+                                        const [, h, min] = timeOnly;
+                                        endDate = new Date(currentStart);
+                                        endDate.setHours(parseInt(h), parseInt(min), 0, 0);
+                                    }
+                                }
+
+                                if (endDate && currentDept && currentType && !isNaN(currentStart.getTime()) && !isNaN(endDate.getTime())) {
+                                    allEntries.push({ dept: currentDept, type: currentType, start: currentStart, end: endDate });
+                                }
+                                currentStart = null;
+                                currentType = '';
+                            }
+                        });
+                    });
+
+                    if (allEntries.length === 0) {
+                        alert('未解析到有效记录！');
+                        loading.style.display = 'none';
+                        return;
+                    }
+
+                    const deptGroups = {};
+                    allEntries.forEach(entry => {
+                        if (!deptGroups[entry.dept]) deptGroups[entry.dept] = [];
+                        deptGroups[entry.dept].push(entry);
+                    });
+
+                    // 获取并排序部门
+                    const sortedDepts = Object.keys(deptGroups).sort((a, b) => getOrderIndex(a) - getOrderIndex(b));
+
+                    let fullReport = '全厂峰谷平统计报告（2026年分时规则）\n\n';
+                    fullReport += '第一部分（各部门事件详情）：\n\n';
+
+                    sortedDepts.forEach(dept => {
+                        const deptEntries = deptGroups[dept];
+                        let typeMap = {}; 
+                        let peakMin = 0, valleyMin = 0, flatMin = 0, totalMin = 0;
+
+                        deptEntries.forEach(entry => {
+                            if (entry.type === '错峰') return;
+
+                            const duration = (entry.end - entry.start) / 60000;
+                            totalMin += duration;
+                            let cur = new Date(entry.start);
+                            while (cur < entry.end) {
+                                const period = getPeriodType(cur);
+                                if (period === '尖峰' || period === '高峰') peakMin += 1;
+                                else if (period === '谷时') valleyMin += 1;
+                                else flatMin += 1;
+                                cur.setMinutes(cur.getMinutes() + 1);
+                            }
+
+                            const s = entry.start;
+                            const e = entry.end;
+                            const sStr = `${s.getMonth() + 1}月${s.getDate()}日${s.getHours()}:${s.getMinutes().toString().padStart(2, '0')}`;
+                            let eStr = (s.getMonth() !== e.getMonth() || s.getDate() !== e.getDate()) 
+                                ? `${e.getMonth() + 1}月${e.getDate()}日${e.getHours()}:${e.getMinutes().toString().padStart(2, '0')}`
+                                : `${e.getHours()}:${e.getMinutes().toString().padStart(2, '0')}`;
+                            
+                            const timeRange = `${sStr}-${eStr}`;
+                            if (!typeMap[entry.type]) typeMap[entry.type] = [];
+                            typeMap[entry.type].push(timeRange);
+                        });
+
+                        const typeTexts = Object.keys(typeMap).map(type => `${typeMap[type].join('、')}${type}`);
+
+                        if (typeTexts.length > 0) {
+                            let hTotal = (totalMin / 60).toFixed(1);
+                            let hPeak = (peakMin / 60).toFixed(1);
+                            let hValley = (valleyMin / 60).toFixed(1);
+                            let hFlat = (flatMin / 60).toFixed(1);
+                            const diff = parseFloat(hTotal) - (parseFloat(hPeak) + parseFloat(hValley) + parseFloat(hFlat));
+                            if (Math.abs(diff) > 0.01) hPeak = (parseFloat(hPeak) + diff).toFixed(1);
+                            fullReport += `【${dept}】${typeTexts.join('，')}，总时长${hTotal}h，其中包含峰时段（${hPeak}h）、谷时段（${hValley}h）和平时段（${hFlat}h）。\n\n`;
+                        }
+                    });
+
+                    fullReport += '第二部分（各部门汇总）：\n\n';
+                    sortedDepts.forEach((dept, idx) => {
+                        const entries = deptGroups[dept];
+                        let counts = { '工停':0, '检修':0, '停产':0, '待料':0, '错峰':0 };
+                        let pMin = 0, vMin = 0, fMin = 0, tMin = 0;
+
+                        entries.forEach(e => {
+                            counts[e.type] = (counts[e.type] || 0) + 1;
+                            if (e.type !== '错峰') {
+                                tMin += (e.end - e.start) / 60000;
+                                let cur = new Date(e.start);
+                                while (cur < e.end) {
+                                    const p = getPeriodType(cur);
+                                    if (p === '尖峰' || p === '高峰') pMin++;
+                                    else if (p === '谷时') vMin++;
+                                    else fMin++;
+                                    cur.setMinutes(cur.getMinutes() + 1);
+                                }
+                            }
+                        });
+
+                        // 部门简称美化：炼铁厂 -> 炼铁，炼钢厂一区 -> 炼钢一区
+                        let shortName = dept.replace('厂', '').replace('炼钢一区', '炼钢一区').replace('炼钢二区', '炼钢二区');
+                        let summary = `（${idx + 1}）${shortName}：`;
+                        
+                        if (counts['错峰'] > 0) summary += `错峰${counts['错峰']}次。`;
+                        let otherTypes = ['工停', '检修', '停产', '待料'].filter(t => counts[t] > 0).map(t => `${t}${counts[t]}次`).join('，');
+                        summary += otherTypes ? otherTypes + '。' : '';
+
+                        if (tMin > 0) {
+                            const totalH = tMin / 60;
+                            summary += `总时长${(totalH).toFixed(1)}h，其中峰时段占比${((pMin/60)/totalH*100).toFixed(2)}%、谷时段占比${((vMin/60)/totalH*100).toFixed(2)}%、平时段占比${((fMin/60)/totalH*100).toFixed(2)}%。`;
+                        }
+                        fullReport += summary + '\n';
+                    });
+
+                    output.textContent = fullReport.trim();
+                    output.style.display = 'block';
+                } catch (err) {
+                    console.error(err);
+                    alert('解析失败，请检查文件格式或数据内容');
+                } finally {
+                    loading.style.display = 'none';
+                    fileInput.value = '';
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        };
+
+        function getPeriodType(date) {
+            const month = date.getMonth() + 1;
+            const hour = date.getHours();
+            const min = date.getMinutes();
+            const total = hour * 60 + min;
+            const isSummer = (month === 7 || month === 8);
+
+            if ((month === 1 || month === 2 || month === 12) && (total >= 18*60 && total < 20*60)) return '尖峰';
+            if (isSummer && (total >= 20*60 && total < 22*60)) return '尖峰';
+
+            if (isSummer) {
+                if (total >= 15*60 && total < 23*60) return '高峰';
+            } else {
+                if ((total >= 8*60 && total < 10*60) || (total >= 16*60 && total < 22*60)) return '高峰';
+            }
+
+            if (isSummer) {
+                if (total >= 1*60 && total < 9*60) return '谷时';
+            } else {
+                if ((total >= 0 && total < 6*60) || (total >= 12*60 && total < 14*60)) return '谷时';
+            }
+            return '平时段';
+        }
+    </script>
+</body>
+</html>
